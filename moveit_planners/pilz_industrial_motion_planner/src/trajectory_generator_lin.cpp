@@ -113,6 +113,26 @@ void TrajectoryGeneratorLIN::extractMotionPlanInfo(const planning_scene::Plannin
     info.goal_pose = getConstraintPose(req.goal_constraints.front());
   }
 
+  // The final seed can be set by the user via `trajectory_constraints` with the name `final_seed`.
+  // This allows to augment the probability that the final point of the trajectory is close to the
+  // required position in joint space.
+  // This is especially useful for redundant robots that have an infinite number of solutions for a given Cartesian
+  // goal.
+  // With a joint-space goal, it is expected that the user provides a seed that is the same as the goal position
+  // in joint space but this is not a requirement.
+  // If a final seed is given, the seed will be interpolated between start- and end seeds rather than the classical
+  // way, where the seed for an interpolated Cartesian pose is the result of the IK of the previous Cartesian pose in the trajectory.
+  for (const auto& trajectory_constraint : req.trajectory_constraints.constraints)
+  {
+    if (trajectory_constraint.name == "final_seed")
+    {
+      for (const auto& joint_constraint : trajectory_constraint.joint_constraints)
+      {
+        info.final_seed[joint_constraint.joint_name] = joint_constraint.position;
+      }
+    }
+  }
+
   assert(req.start_state.joint_state.name.size() == req.start_state.joint_state.position.size());
   for (const auto& joint_name : robot_model_->getJointModelGroup(req.group_name)->getActiveJointModelNames())
   {
@@ -134,11 +154,17 @@ void TrajectoryGeneratorLIN::extractMotionPlanInfo(const planning_scene::Plannin
 
   // check goal pose ik before Cartesian motion plan starts
   std::map<std::string, double> ik_solution;
-  if (!computePoseIK(scene, info.group_name, info.link_name, info.goal_pose, frame_id, info.start_joint_position,
+  if (info.final_seed.empty() && !computePoseIK(scene, info.group_name, info.link_name, info.goal_pose, frame_id, info.start_joint_position,
                      ik_solution))
   {
     std::ostringstream os;
-    os << "Failed to compute inverse kinematics for link: " << info.link_name << " of goal pose";
+    os << "Failed to compute inverse kinematics of goal pose for link: " << info.link_name;
+    throw LinInverseForGoalIncalculable(os.str());
+  }
+  else if (!computePoseIK(scene, info.group_name, info.link_name, info.goal_pose, frame_id, info.final_seed, ik_solution))
+  {
+    std::ostringstream os;
+    os << "Failed to compute inverse kinematics of final seed for link: " << info.link_name;
     throw LinInverseForGoalIncalculable(os.str());
   }
 }
@@ -163,13 +189,32 @@ void TrajectoryGeneratorLIN::plan(const planning_scene::PlanningSceneConstPtr& s
   moveit_msgs::msg::MoveItErrorCodes error_code;
   // sample the Cartesian trajectory and compute joint trajectory using inverse
   // kinematics
-  if (!generateJointTrajectory(scene, planner_limits_.getJointLimitContainer(), cart_trajectory, plan_info.group_name,
-                               plan_info.link_name, plan_info.start_joint_position, sampling_time, joint_trajectory,
-                               error_code))
+
+  if (plan_info.final_seed.empty())
   {
-    std::ostringstream os;
-    os << "Failed to generate valid joint trajectory from the Cartesian path";
-    throw LinTrajectoryConversionFailure(os.str(), error_code.val);
+    // Classical way: use IK of previous Cartesian pose as seed for the next
+    // Cartesian pose.
+    if (!generateJointTrajectory(scene, planner_limits_.getJointLimitContainer(), cart_trajectory, plan_info.group_name,
+                                 plan_info.link_name, plan_info.start_joint_position, sampling_time, joint_trajectory,
+                                 error_code))
+    {
+      std::ostringstream os;
+      os << "Failed to generate valid joint trajectory from the Cartesian path";
+      throw LinTrajectoryConversionFailure(os.str(), error_code.val);
+    }
+  }
+  else
+  {
+    // If `plan_info.final_seed` is not empty, the final seed will be used to
+    // interpolate between start- and end seeds rather than the classical way (cf. above).
+    if (!generateJointTrajectory(scene, planner_limits_.getJointLimitContainer(), cart_trajectory, plan_info.group_name,
+          plan_info.link_name, plan_info.start_joint_position, plan_info.final_seed,
+          sampling_time, joint_trajectory, error_code))
+    {
+      std::ostringstream os;
+      os << "Failed to generate valid joint trajectory from the Cartesian path";
+      throw LinTrajectoryConversionFailure(os.str(), error_code.val);
+    }
   }
 }
 

@@ -150,6 +150,42 @@ bool generateJointTrajectory(const planning_scene::PlanningSceneConstPtr& scene,
                              moveit_msgs::msg::MoveItErrorCodes& error_code, bool check_self_collision = false);
 
 /**
+ * @brief Generate joint trajectory from a KDL Cartesian trajectory
+ *
+ * In this version the seed for a given point is not the inverse kinematics
+ * solution of the previous Cartesian point but the linear interpolation
+ * between the initial and the final joint positions.
+ *
+ * Overload of pilz_industrial_motion_planner::generateJointTrajectory defined
+ * in
+ * `pilz_industrial_motion_planner/include/pilz_industrial_motion_planner/trajectory_functions.h`.
+ *
+ * @param scene: planning scene
+ * @param joint_limits: joint limits
+ * @param trajectory: KDL Cartesian trajectory
+ * @param group_name: name of the planning group
+ * @param link_name: name of the target robot link
+ * @param initial_joint_position: initial joint positions, used as start for
+ * the linear interpolation of seed
+ * @param final_joint_position: initial joint positions, used as start for
+ * the linear interpolation of seed
+ * @param sampling_time: sampling time of the generated trajectory
+ * @param joint_trajectory: output as robot joint trajectory, first and last
+ * point will have zero velocity
+ * and acceleration
+ * @param error_code: detailed error information
+ * @param check_self_collision: check for self collision during creation
+ * @return true if succeed
+ */
+bool generateJointTrajectory(const planning_scene::PlanningSceneConstPtr& scene,
+                             const JointLimitsContainer& joint_limits, const KDL::Trajectory& trajectory,
+                             const std::string& group_name, const std::string& link_name,
+                             const std::map<std::string, double>& initial_joint_position,
+                             const std::map<std::string, double>& final_joint_position, const double& sampling_time,
+                             trajectory_msgs::msg::JointTrajectory& joint_trajectory,
+                             moveit_msgs::msg::MoveItErrorCodes& error_code, bool check_self_collision = false);
+
+/**
  * @brief Determines the sampling time and checks that both trajectroies use the
  * same sampling time.
  * @return TRUE if the sampling time is equal between all given points (except
@@ -215,6 +251,20 @@ bool intersectionFound(const Eigen::Vector3d& p_center, const Eigen::Vector3d& p
 bool isStateColliding(const bool test_for_self_collision, const planning_scene::PlanningSceneConstPtr& scene,
                       moveit::core::RobotState* state, const moveit::core::JointModelGroup* const group,
                       const double* const ik_solution);
+
+/**
+ * @brief Interpolates joint positions analogly to interpolated Cartesian positions
+ * @initial_joint_position Joint position, IK solution from initial_pose
+ * @final_joint_position Joint position, IK solution from final_pose
+ * @initial_pose Initial Cartesian pose
+ * @final_pose Final Cartesian pose
+ * @pose Interpolated pose between initial_pose and final_pose.
+ */
+std::map<std::string, double> interpolateJointPosition(const std::map<std::string, double>& initial_joint_position,
+                                                       const std::map<std::string, double>& final_joint_position,
+                                                       const KDL::Frame& initial_pose, const KDL::Frame& final_pose,
+                                                       const KDL::Frame& pose);
+
 }  // namespace pilz_industrial_motion_planner
 
 void normalizeQuaternion(geometry_msgs::msg::Quaternion& quat);
